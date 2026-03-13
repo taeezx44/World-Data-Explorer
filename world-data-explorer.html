@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Data Explorer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#060810;
+  --surface:#0d1117;
+  --card:#111827;
+  --border:#1e2533;
+  --text:#e8eaf0;
+  --muted:#5a6478;
+  --accent:#4f9cf9;
+  --glow:rgba(79,156,249,0.15);
+}
+body{
+  font-family:'Syne',sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  overflow-x:hidden;
+}
+body::before{
+  content:'';position:fixed;inset:0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(79,156,249,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 90% 90%, rgba(139,92,246,0.05) 0%, transparent 50%);
+  pointer-events:none;z-index:0;
+}
+
+/* HEADER */
+header{
+  position:relative;z-index:10;
+  padding:20px 32px;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border);
+  background:rgba(6,8,16,0.8);
+  backdrop-filter:blur(20px);
+}
+.logo{
+  font-size:1.1rem;font-weight:700;letter-spacing:-.02em;
+  display:flex;align-items:center;gap:10px;
+}
+.logo-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 12px var(--accent);
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.6;transform:scale(.8);}}
+.logo span{color:var(--muted);font-weight:400;}
+
+/* METRICS SELECTOR */
+.metrics{display:flex;gap:4px;}
+.metric-btn{
+  padding:6px 14px;border-radius:6px;
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--muted);
+  font-family:'Syne',sans-serif;
+  font-size:.75rem;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;
+  cursor:pointer;transition:all .2s;
+}
+.metric-btn:hover{border-color:rgba(79,156,249,.4);color:var(--text);}
+.metric-btn.active{
+  background:rgba(79,156,249,.12);
+  border-color:rgba(79,156,249,.5);
+  color:var(--accent);
+}
+
+/* MAIN LAYOUT */
+.app{
+  position:relative;z-index:1;
+  display:grid;
+  grid-template-columns:1fr 340px;
+  height:calc(100vh - 65px);
+}
+
+/* MAP CONTAINER */
+.map-wrap{
+  position:relative;overflow:hidden;
+}
+.map-wrap svg{width:100%;height:100%;}
+
+/* Country paths */
+.country{
+  fill:#1a2035;
+  stroke:#0d1117;
+  stroke-width:0.5;
+  cursor:pointer;
+  transition:filter .15s;
+}
+.country:hover{filter:brightness(1.4);}
+.country.selected{
+  stroke:#4f9cf9;
+  stroke-width:1.5;
+  filter:brightness(1.3);
+}
+
+/* GRATICULE */
+.graticule{fill:none;stroke:#111827;stroke-width:.3;}
+.sphere{fill:#060d1a;}
+
+/* TOOLTIP */
+#tooltip{
+  position:fixed;
+  pointer-events:none;
+  z-index:100;
+  background:rgba(13,17,23,.95);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:10px 14px;
+  min-width:180px;
+  opacity:0;
+  transform:translate(-50%,-110%) scale(.95);
+  transition:opacity .15s, transform .15s;
+  backdrop-filter:blur(20px);
+}
+#tooltip.show{opacity:1;transform:translate(-50%,-110%) scale(1);}
+.tip-name{font-size:.9rem;font-weight:700;margin-bottom:8px;letter-spacing:-.01em;}
+.tip-flag{font-size:1.4rem;margin-right:6px;}
+.tip-row{display:flex;justify-content:space-between;gap:16px;margin-bottom:3px;align-items:center;}
+.tip-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.tip-val{font-family:'DM Mono',monospace;font-size:.8rem;color:var(--accent);}
+
+/* SIDEBAR */
+.sidebar{
+  background:var(--surface);
+  border-left:1px solid var(--border);
+  overflow-y:auto;
+  overflow-x:hidden;
+  display:flex;
+  flex-direction:column;
+}
+.sidebar::-webkit-scrollbar{width:4px;}
+.sidebar::-webkit-scrollbar-track{background:transparent;}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+/* COUNTRY DETAIL */
+.detail-header{
+  padding:24px 24px 20px;
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;
+  background:var(--surface);z-index:5;
+}
+.detail-flag{font-size:2.2rem;margin-bottom:8px;}
+.detail-name{font-size:1.35rem;font-weight:800;letter-spacing:-.03em;margin-bottom:2px;}
+.detail-region{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
+
+.stats-grid{
+  display:grid;grid-template-columns:1fr 1fr;
+  gap:10px;padding:20px;
+}
+.stat-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+}
+.stat-label{font-size:.63rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.stat-val{font-family:'DM Mono',monospace;font-size:1.1rem;font-weight:500;color:var(--text);}
+.stat-sub{font-size:.65rem;color:var(--muted);margin-top:2px;}
+
+/* SPARKBAR */
+.bar-row{padding:0 20px 6px;}
+.bar-label{display:flex;justify-content:space-between;margin-bottom:5px;}
+.bar-label span:first-child{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;}
+.bar-label span:last-child{font-family:'DM Mono',monospace;font-size:.72rem;color:var(--accent);}
+.bar-track{height:5px;background:var(--border);border-radius:3px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:3px;transition:width .6s cubic-bezier(.16,1,.3,1);}
+
+/* RANKING LIST */
+.rank-section{padding:20px;}
+.rank-title{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px;}
+.rank-item{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 0;
+  border-bottom:1px solid rgba(255,255,255,.03);
+  cursor:pointer;
+  transition:opacity .15s;
+}
+.rank-item:hover{opacity:.7;}
+.rank-num{font-family:'DM Mono',monospace;font-size:.65rem;color:var(--muted);min-width:20px;}
+.rank-flag{font-size:1rem;}
+.rank-name{font-size:.82rem;font-weight:600;flex:1;}
+.rank-val{font-family:'DM Mono',monospace;font-size:.75rem;color:var(--accent);}
+
+/* LEGEND */
+.legend{
+  position:absolute;bottom:20px;left:24px;
+  background:rgba(13,17,23,.8);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 16px;
+  backdrop-filter:blur(10px);
+}
+.legend-title{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+.legend-bar{
+  width:200px;height:6px;border-radius:3px;
+  background:linear-gradient(to right, #111827, #1d4ed8, #60a5fa, #93c5fd, #dbeafe);
+  margin-bottom:5px;
+}
+.legend-labels{display:flex;justify-content:space-between;}
+.legend-labels span{font-family:'DM Mono',monospace;font-size:.62rem;color:var(--muted);}
+
+/* ZOOM controls */
+.zoom-btns{
+  position:absolute;top:20px;left:24px;
+  display:flex;flex-direction:column;gap:4px;
+}
+.zoom-btn{
+  width:32px;height:32px;
+  background:rgba(13,17,23,.8);
+  border:1px solid var(--border);
+  border-radius:8px;
+  color:var(--text);
+  font-size:1rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .2s;backdrop-filter:blur(10px);
+}
+.zoom-btn:hover{border-color:var(--accent);color:var(--accent);}
+
+/* EMPTY STATE */
+.empty-state{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  padding:40px 24px;text-align:center;gap:12px;
+  color:var(--muted);
+}
+.empty-globe{font-size:3rem;opacity:.3;}
+.empty-text{font-size:.85rem;line-height:1.6;}
+
+/* LOADING */
+#loadingBar{
+  position:fixed;top:0;left:0;height:2px;
+  background:var(--accent);
+  box-shadow:0 0 10px var(--accent);
+  transition:width .3s;z-index:9999;
+}
+
+/* TOAST */
+.toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);
+  background:var(--card);border:1px solid var(--border);
+  border-radius:8px;padding:8px 16px;
+  font-size:.8rem;color:var(--text);
+  z-index:9999;transition:transform .3s ease;
+  pointer-events:none;
+}
+.toast.show{transform:translateX(-50%) translateY(0);}
+
+/* METRIC COLORS */
+.metric-gdp .bar-fill{background:linear-gradient(90deg,#1d4ed8,#60a5fa);}
+.metric-pop .bar-fill{background:linear-gradient(90deg,#7c3aed,#a78bfa);}
+.metric-life .bar-fill{background:linear-gradient(90deg,#065f46,#34d399);}
+.metric-area .bar-fill{background:linear-gradient(90deg,#92400e,#fbbf24);}
+
+@media(max-width:900px){
+  .app{grid-template-columns:1fr;}
+  .sidebar{display:none;}
+}
+</style>
+</head>
+<body>
+<div id="loadingBar" style="width:0%"></div>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    World Data Explorer <span>/ Global Insights</span>
+  </div>
+  <div class="metrics" id="metricsBar">
+    <button class="metric-btn active" data-metric="gdp">GDP</button>
+    <button class="metric-btn" data-metric="population">Population</button>
+    <button class="metric-btn" data-metric="lifeExpectancy">Life Expectancy</button>
+    <button class="metric-btn" data-metric="area">Area</button>
+  </div>
+</header>
+
+<div class="app">
+  <div class="map-wrap" id="mapWrap">
+    <div class="zoom-btns">
+      <button class="zoom-btn" onclick="zoomIn()">+</button>
+      <button class="zoom-btn" onclick="zoomOut()">−</button>
+      <button class="zoom-btn" onclick="resetZoom()" title="Reset" style="font-size:.7rem;">⊙</button>
+    </div>
+    <div class="legend" id="legend">
+      <div class="legend-title" id="legendTitle">GDP (USD)</div>
+      <div class="legend-bar" id="legendBar"></div>
+      <div class="legend-labels">
+        <span id="legendMin">Low</span>
+        <span id="legendMax">High</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar" id="sidebar">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-globe">🌍</div>
+      <div class="empty-text">Hover or click any country<br>to explore its data</div>
+    </div>
+    <div id="countryDetail" style="display:none"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ==================== DATA ====================
+const COUNTRIES_DATA = {
+  "USA":   { name:"United States", flag:"🇺🇸", region:"Americas",    gdp:25463.3, population:331.4, lifeExpectancy:76.1, area:9833 },
+  "CHN":   { name:"China",         flag:"🇨🇳", region:"Asia",         gdp:17734.1, population:1412, lifeExpectancy:77.1, area:9597 },
+  "JPN":   { name:"Japan",         flag:"🇯🇵", region:"Asia",         gdp:4231.1,  population:125.7, lifeExpectancy:84.3, area:378  },
+  "DEU":   { name:"Germany",       flag:"🇩🇪", region:"Europe",       gdp:4072.2,  population:83.2, lifeExpectancy:80.9, area:357  },
+  "IND":   { name:"India",         flag:"🇮🇳", region:"Asia",         gdp:3385.1,  population:1380, lifeExpectancy:69.7, area:3287 },
+  "GBR":   { name:"United Kingdom",flag:"🇬🇧", region:"Europe",       gdp:3070.7,  population:67.2, lifeExpectancy:80.7, area:243  },
+  "FRA":   { name:"France",        flag:"🇫🇷", region:"Europe",       gdp:2778.1,  population:67.4, lifeExpectancy:82.5, area:549  },
+  "CAN":   { name:"Canada",        flag:"🇨🇦", region:"Americas",     gdp:2139.8,  population:38.2, lifeExpectancy:82.3, area:9985 },
+  "RUS":   { name:"Russia",        flag:"🇷🇺", region:"Europe/Asia",  gdp:2240.4,  population:145.9, lifeExpectancy:72.6, area:17098},
+  "KOR":   { name:"South Korea",   flag:"🇰🇷", region:"Asia",         gdp:1665.2,  population:51.7, lifeExpectancy:83.5, area:100  },
+  "AUS":   { name:"Australia",     flag:"🇦🇺", region:"Oceania",      gdp:1675.4,  population:25.7, lifeExpectancy:83.4, area:7692 },
+  "BRA":   { name:"Brazil",        flag:"🇧🇷", region:"Americas",     gdp:1920.1,  population:214.3, lifeExpectancy:75.9, area:8516 },
+  "ITA":   { name:"Italy",         flag:"🇮🇹", region:"Europe",       gdp:2058.3,  population:60.4, lifeExpectancy:83.2, area:301  },
+  "ESP":   { name:"Spain",         flag:"🇪🇸", region:"Europe",       gdp:1418.3,  population:47.4, lifeExpectancy:83.4, area:506  },
+  "MEX":   { name:"Mexico",        flag:"🇲🇽", region:"Americas",     gdp:1322.5,  population:128.9, lifeExpectancy:75.1, area:1964 },
+  "IDN":   { name:"Indonesia",     flag:"🇮🇩", region:"Asia",         gdp:1319.1,  population:273.5, lifeExpectancy:71.7, area:1905 },
+  "NLD":   { name:"Netherlands",   flag:"🇳🇱", region:"Europe",       gdp:1013.0,  population:17.6, lifeExpectancy:82.3, area:41   },
+  "SAU":   { name:"Saudi Arabia",  flag:"🇸🇦", region:"Middle East",  gdp:1108.1,  population:35.0, lifeExpectancy:76.5, area:2150 },
+  "CHE":   { name:"Switzerland",   flag:"🇨🇭", region:"Europe",       gdp:808.0,   population:8.7,  lifeExpectancy:83.8, area:41   },
+  "TUR":   { name:"Turkey",        flag:"🇹🇷", region:"Europe/Asia",  gdp:905.9,   population:84.7, lifeExpectancy:77.7, area:785  },
+  "POL":   { name:"Poland",        flag:"🇵🇱", region:"Europe",       gdp:688.0,   population:38.0, lifeExpectancy:77.8, area:313  },
+  "ARG":   { name:"Argentina",     flag:"🇦🇷", region:"Americas",     gdp:632.8,   population:45.4, lifeExpectancy:76.7, area:2780 },
+  "SWE":   { name:"Sweden",        flag:"🇸🇪", region:"Europe",       gdp:585.9,   population:10.4, lifeExpectancy:82.8, area:450  },
+  "NOR":   { name:"Norway",        flag:"🇳🇴", region:"Europe",       gdp:579.3,   population:5.4,  lifeExpectancy:83.2, area:385  },
+  "BEL":   { name:"Belgium",       flag:"🇧🇪", region:"Europe",       gdp:594.1,   population:11.6, lifeExpectancy:82.1, area:31   },
+  "ISR":   { name:"Israel",        flag:"🇮🇱", region:"Middle East",  gdp:564.1,   population:9.2,  lifeExpectancy:82.6, area:21   },
+  "IRE":   { name:"Ireland",       flag:"🇮🇪", region:"Europe",       gdp:504.0,   population:5.1,  lifeExpectancy:82.3, area:70   },
+  "SGP":   { name:"Singapore",     flag:"🇸🇬", region:"Asia",         gdp:466.8,   population:5.9,  lifeExpectancy:83.5, area:1    },
+  "ZAF":   { name:"South Africa",  flag:"🇿🇦", region:"Africa",       gdp:405.9,   population:59.3, lifeExpectancy:64.1, area:1219 },
+  "EGY":   { name:"Egypt",         flag:"🇪🇬", region:"Africa",       gdp:469.1,   population:102.3, lifeExpectancy:71.8, area:1002 },
+  "NGA":   { name:"Nigeria",       flag:"🇳🇬", region:"Africa",       gdp:477.4,   population:211.4, lifeExpectancy:54.7, area:924  },
+  "PAK":   { name:"Pakistan",      flag:"🇵🇰", region:"Asia",         gdp:376.5,   population:220.9, lifeExpectancy:67.3, area:796  },
+  "BGD":   { name:"Bangladesh",    flag:"🇧🇩", region:"Asia",         gdp:460.2,   population:166.3, lifeExpectancy:72.6, area:148  },
+  "PHL":   { name:"Philippines",   flag:"🇵🇭", region:"Asia",         gdp:404.3,   population:110.9, lifeExpectancy:71.2, area:300  },
+  "MYS":   { name:"Malaysia",      flag:"🇲🇾", region:"Asia",         gdp:407.0,   population:32.8, lifeExpectancy:76.2, area:330  },
+  "THA":   { name:"Thailand",      flag:"🇹🇭", region:"Asia",         gdp:495.3,   population:71.6, lifeExpectancy:77.2, area:513  },
+  "VNM":   { name:"Vietnam",       flag:"🇻🇳", region:"Asia",         gdp:408.8,   population:97.3, lifeExpectancy:73.7, area:331  },
+  "COL":   { name:"Colombia",      flag:"🇨🇴", region:"Americas",     gdp:343.7,   population:51.3, lifeExpectancy:77.3, area:1142 },
+  "CHL":   { name:"Chile",         flag:"🇨🇱", region:"Americas",     gdp:301.0,   population:19.3, lifeExpectancy:80.5, area:756  },
+  "PER":   { name:"Peru",          flag:"🇵🇪", region:"Americas",     gdp:242.6,   population:33.0, lifeExpectancy:76.5, area:1285 },
+  "FIN":   { name:"Finland",       flag:"🇫🇮", region:"Europe",       gdp:283.9,   population:5.5,  lifeExpectancy:81.9, area:338  },
+  "DNK":   { name:"Denmark",       flag:"🇩🇰", region:"Europe",       gdp:398.3,   population:5.9,  lifeExpectancy:81.4, area:43   },
+  "AUT":   { name:"Austria",       flag:"🇦🇹", region:"Europe",       gdp:470.0,   population:9.1,  lifeExpectancy:81.5, area:84   },
+  "GRC":   { name:"Greece",        flag:"🇬🇷", region:"Europe",       gdp:219.1,   population:10.7, lifeExpectancy:82.2, area:132  },
+  "PRT":   { name:"Portugal",      flag:"🇵🇹", region:"Europe",       gdp:251.9,   population:10.3, lifeExpectancy:81.9, area:92   },
+  "IRN":   { name:"Iran",          flag:"🇮🇷", region:"Middle East",  gdp:368.9,   population:85.0, lifeExpectancy:76.9, area:1648 },
+  "DZA":   { name:"Algeria",       flag:"🇩🇿", region:"Africa",       gdp:191.9,   population:44.6, lifeExpectancy:77.0, area:2382 },
+  "ETH":   { name:"Ethiopia",      flag:"🇪🇹", region:"Africa",       gdp:111.3,   population:120.3, lifeExpectancy:65.5, area:1104 },
+  "KEN":   { name:"Kenya",         flag:"🇰🇪", region:"Africa",       gdp:109.5,   population:54.0, lifeExpectancy:66.7, area:580  },
+  "UKR":   { name:"Ukraine",       flag:"🇺🇦", region:"Europe",       gdp:200.1,   population:43.5, lifeExpectancy:73.0, area:604  },
+  "HUN":   { name:"Hungary",       flag:"🇭🇺", region:"Europe",       gdp:185.5,   population:9.7,  lifeExpectancy:76.7, area:93   },
+  "CZE":   { name:"Czech Republic",flag:"🇨🇿", region:"Europe",       gdp:290.9,   population:10.9, lifeExpectancy:79.4, area:79   },
+  "ROU":   { name:"Romania",       flag:"🇷🇴", region:"Europe",       gdp:301.3,   population:19.2, lifeExpectancy:75.6, area:238  },
+  "NZL":   { name:"New Zealand",   flag:"🇳🇿", region:"Oceania",      gdp:247.6,   population:5.1,  lifeExpectancy:82.3, area:268  },
+  "QAT":   { name:"Qatar",         flag:"🇶🇦", region:"Middle East",  gdp:235.5,   population:2.9,  lifeExpectancy:79.4, area:12   },
+  "ARE":   { name:"UAE",           flag:"🇦🇪", region:"Middle East",  gdp:421.1,   population:9.8,  lifeExpectancy:78.0, area:84   },
+  "KAZ":   { name:"Kazakhstan",    flag:"🇰🇿", region:"Asia",         gdp:220.6,   population:19.0, lifeExpectancy:73.2, area:2725 },
+  "CUB":   { name:"Cuba",          flag:"🇨🇺", region:"Americas",     gdp:107.4,   population:11.3, lifeExpectancy:79.1, area:110  },
+  "ECU":   { name:"Ecuador",       flag:"🇪🇨", region:"Americas",     gdp:115.1,   population:17.8, lifeExpectancy:77.6, area:284  },
+  "VEN":   { name:"Venezuela",     flag:"🇻🇪", region:"Americas",     gdp:92.8,    population:28.9, lifeExpectancy:72.1, area:912  },
+  "BOL":   { name:"Bolivia",       flag:"🇧🇴", region:"Americas",     gdp:44.0,    population:11.8, lifeExpectancy:71.5, area:1099 },
+  "CMR":   { name:"Cameroon",      flag:"🇨🇲", region:"Africa",       gdp:47.2,    population:27.2, lifeExpectancy:60.3, area:475  },
+  "GHA":   { name:"Ghana",         flag:"🇬🇭", region:"Africa",       gdp:78.3,    population:32.4, lifeExpectancy:64.1, area:239  },
+  "TZA":   { name:"Tanzania",      flag:"🇹🇿", region:"Africa",       gdp:75.4,    population:61.7, lifeExpectancy:66.4, area:945  },
+  "MOZ":   { name:"Mozambique",    flag:"🇲🇿", region:"Africa",       gdp:18.6,    population:31.3, lifeExpectancy:60.9, area:799  },
+  "MDG":   { name:"Madagascar",    flag:"🇲🇬", region:"Africa",       gdp:15.0,    population:27.7, lifeExpectancy:67.0, area:587  },
+  "ZMB":   { name:"Zambia",        flag:"🇿🇲", region:"Africa",       gdp:22.1,    population:18.4, lifeExpectancy:63.9, area:753  },
+  "ZWE":   { name:"Zimbabwe",      flag:"🇿🇼", region:"Africa",       gdp:28.6,    population:15.1, lifeExpectancy:61.5, area:391  },
+  "SDN":   { name:"Sudan",         flag:"🇸🇩", region:"Africa",       gdp:35.8,    population:43.8, lifeExpectancy:65.3, area:1861 },
+  "SOM":   { name:"Somalia",       flag:"🇸🇴", region:"Africa",       gdp:8.3,     population:15.9, lifeExpectancy:57.4, area:638  },
+  "AGO":   { name:"Angola",        flag:"🇦🇴", region:"Africa",       gdp:124.9,   population:33.9, lifeExpectancy:61.1, area:1247 },
+  "COD":   { name:"DR Congo",      flag:"🇨🇩", region:"Africa",       gdp:55.1,    population:89.6, lifeExpectancy:60.7, area:2345 },
+  "AFG":   { name:"Afghanistan",   flag:"🇦🇫", region:"Asia",         gdp:19.8,    population:38.9, lifeExpectancy:64.8, area:653  },
+  "MMR":   { name:"Myanmar",       flag:"🇲🇲", region:"Asia",         gdp:65.1,    population:54.4, lifeExpectancy:67.1, area:677  },
+  "KHM":   { name:"Cambodia",      flag:"🇰🇭", region:"Asia",         gdp:26.9,    population:16.7, lifeExpectancy:70.0, area:181  },
+  "LAO":   { name:"Laos",          flag:"🇱🇦", region:"Asia",         gdp:18.8,    population:7.3,  lifeExpectancy:68.2, area:237  },
+  "MNG":   { name:"Mongolia",      flag:"🇲🇳", region:"Asia",         gdp:15.4,    population:3.3,  lifeExpectancy:70.6, area:1564 },
+  "PNG":   { name:"Papua New Guinea",flag:"🇵🇬", region:"Oceania",   gdp:30.8,    population:9.1,  lifeExpectancy:64.5, area:463  },
+};
+
+const METRIC_CONFIG = {
+  gdp:           { label:"GDP", unit:"$B", format:v=>`$${v.toFixed(0)}B`,  colors:["#0f172a","#1e3a5f","#1d4ed8","#60a5fa","#bfdbfe"], max:25000 },
+  population:    { label:"Population", unit:"M", format:v=>`${v.toFixed(1)}M`, colors:["#0f172a","#2e1065","#7c3aed","#a78bfa","#ede9fe"], max:1412 },
+  lifeExpectancy:{ label:"Life Expectancy", unit:"yrs", format:v=>`${v.toFixed(1)}yr`, colors:["#0f172a","#052e16","#065f46","#34d399","#d1fae5"], max:85 },
+  area:          { label:"Area", unit:"k km²", format:v=>`${v.toFixed(0)}k km²`, colors:["#0f172a","#422006","#92400e","#fbbf24","#fef3c7"], max:17098 },
+};
+
+// Alpha-2 to Alpha-3 mapping
+const ISO2TO3 = {
+  "AF":"AFG","AL":"ALB","DZ":"DZA","AD":"AND","AO":"AGO","AG":"ATG","AR":"ARG","AM":"ARM",
+  "AU":"AUS","AT":"AUT","AZ":"AZE","BS":"BHS","BH":"BHR","BD":"BGD","BB":"BRB","BY":"BLR",
+  "BE":"BEL","BZ":"BLZ","BJ":"BEN","BT":"BTN","BO":"BOL","BA":"BIH","BW":"BWA","BR":"BRA",
+  "BN":"BRN","BG":"BGR","BF":"BFA","BI":"BDI","CV":"CPV","KH":"KHM","CM":"CMR","CA":"CAN",
+  "CF":"CAF","TD":"TCD","CL":"CHL","CN":"CHN","CO":"COL","KM":"COM","CG":"COG","CD":"COD",
+  "CR":"CRI","CI":"CIV","HR":"HRV","CU":"CUB","CY":"CYP","CZ":"CZE","DK":"DNK","DJ":"DJI",
+  "DM":"DMA","DO":"DOM","EC":"ECU","EG":"EGY","SV":"SLV","GQ":"GNQ","ER":"ERI","EE":"EST",
+  "SZ":"SWZ","ET":"ETH","FJ":"FJI","FI":"FIN","FR":"FRA","GA":"GAB","GM":"GMB","GE":"GEO",
+  "DE":"DEU","GH":"GHA","GR":"GRC","GD":"GRD","GT":"GTM","GN":"GIN","GW":"GNB","GY":"GUY",
+  "HT":"HTI","HN":"HND","HU":"HUN","IS":"ISL","IN":"IND","ID":"IDN","IR":"IRN","IQ":"IRQ",
+  "IE":"IRL","IL":"ISR","IT":"ITA","JM":"JAM","JP":"JPN","JO":"JOR","KZ":"KAZ","KE":"KEN",
+  "KI":"KIR","KW":"KWT","KG":"KGZ","LA":"LAO","LV":"LVA","LB":"LBN","LS":"LSO","LR":"LBR",
+  "LY":"LBY","LI":"LIE","LT":"LTU","LU":"LUX","MG":"MDG","MW":"MWI","MY":"MYS","MV":"MDV",
+  "ML":"MLI","MT":"MLT","MH":"MHL","MR":"MRT","MU":"MUS","MX":"MEX","FM":"FSM","MD":"MDA",
+  "MC":"MCO","MN":"MNG","ME":"MNE","MA":"MAR","MZ":"MOZ","MM":"MMR","NA":"NAM","NR":"NRU",
+  "NP":"NPL","NL":"NLD","NZ":"NZL","NI":"NIC","NE":"NER","NG":"NGA","MK":"MKD","NO":"NOR",
+  "OM":"OMN","PK":"PAK","PW":"PLW","PA":"PAN","PG":"PNG","PY":"PRY","PE":"PER","PH":"PHL",
+  "PL":"POL","PT":"PRT","QA":"QAT","RO":"ROU","RU":"RUS","RW":"RWA","KN":"KNA","LC":"LCA",
+  "VC":"VCT","WS":"WSM","SM":"SMR","ST":"STP","SA":"SAU","SN":"SEN","RS":"SRB","SC":"SYC",
+  "SL":"SLE","SG":"SGP","SK":"SVK","SI":"SVN","SB":"SLB","SO":"SOM","ZA":"ZAF","SS":"SSD",
+  "ES":"ESP","LK":"LKA","SD":"SDN","SR":"SUR","SE":"SWE","CH":"CHE","SY":"SYR","TW":"TWN",
+  "TJ":"TJK","TZ":"TZA","TH":"THA","TL":"TLS","TG":"TGO","TO":"TON","TT":"TTO","TN":"TUN",
+  "TR":"TUR","TM":"TKM","TV":"TUV","UG":"UGA","UA":"UKR","AE":"ARE","GB":"GBR","US":"USA",
+  "UY":"URY","UZ":"UZB","VU":"VUT","VE":"VEN","VN":"VNM","YE":"YEM","ZM":"ZMB","ZW":"ZWE"
+};
+
+// ==================== STATE ====================
+let currentMetric = "gdp";
+let selectedCountry = null;
+let geoData = null;
+let svg, projection, path, g, zoom;
+let width, height;
+
+// ==================== INIT ====================
+async function init() {
+  updateLoadingBar(10);
+  const mapWrap = document.getElementById('mapWrap');
+  width = mapWrap.clientWidth;
+  height = mapWrap.clientHeight;
+
+  svg = d3.select('#mapWrap').append('svg')
+    .attr('width', width).attr('height', height);
+
+  zoom = d3.zoom()
+    .scaleExtent([1, 8])
+    .on('zoom', (e) => g.attr('transform', e.transform));
+  svg.call(zoom);
+
+  projection = d3.geoNaturalEarth1()
+    .scale(width / 6.2)
+    .translate([width / 2, height / 2]);
+
+  path = d3.geoPath().projection(projection);
+  g = svg.append('g');
+
+  // Globe sphere
+  g.append('path')
+    .datum({type:'Sphere'})
+    .attr('class','sphere')
+    .attr('d', path);
+
+  // Graticule
+  g.append('path')
+    .datum(d3.geoGraticule()())
+    .attr('class','graticule')
+    .attr('d', path);
+
+  updateLoadingBar(30);
+
+  try {
+    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json');
+    const topo = await res.json();
+    updateLoadingBar(70);
+    const countries110 = topojson.feature(topo, topo.objects.countries);
+    geoData = countries110;
+    drawMap();
+    updateLoadingBar(100);
+    setTimeout(() => document.getElementById('loadingBar').style.opacity = 0, 500);
+  } catch(e) {
+    console.error(e);
+    showToast('Using simplified map data');
+    loadFallback();
+  }
+}
+
+// Minimal topojson feature extractor
+function topojson_feature(topology, object) {
+  const arcs = topology.arcs;
+  function line(arc) {
+    const idx = arc < 0 ? ~arc : arc;
+    const a = arcs[idx];
+    const coords = [];
+    let x = 0, y = 0;
+    for (const [dx, dy] of a) {
+      x += dx; y += dy;
+      coords.push([x * topology.transform.scale[0] + topology.transform.translate[0],
+                   y * topology.transform.scale[1] + topology.transform.translate[1]]);
+    }
+    return arc < 0 ? coords.reverse() : coords;
+  }
+  function ring(arcs) { return arcs.flatMap(line); }
+  function polygon(rings) { return rings.map(ring); }
+
+  const features = object.geometries.map(geo => {
+    let coordinates;
+    if (geo.type === 'Polygon') coordinates = polygon(geo.arcs);
+    else if (geo.type === 'MultiPolygon') coordinates = geo.arcs.map(polygon);
+    return {
+      type:'Feature',
+      id: geo.id,
+      properties: geo.properties || {},
+      geometry: { type: geo.type, coordinates }
+    };
+  });
+  return { type:'FeatureCollection', features };
+}
+
+function updateLoadingBar(pct) {
+  document.getElementById('loadingBar').style.width = pct + '%';
+}
+
+// ==================== DRAW MAP ====================
+function drawMap() {
+  if (!geoData) return;
+  const config = METRIC_CONFIG[currentMetric];
+
+  // Color scale
+  const values = Object.values(COUNTRIES_DATA).map(d => d[currentMetric]);
+  const colorScale = d3.scaleQuantile()
+    .domain(values)
+    .range(config.colors);
+
+  // Draw countries
+  g.selectAll('.country').remove();
+  g.selectAll('.country')
+    .data(geoData.features)
+    .enter().append('path')
+    .attr('class', d => {
+      const iso3 = getISO3(d.id);
+      return 'country' + (selectedCountry === iso3 ? ' selected' : '');
+    })
+    .attr('d', path)
+    .attr('fill', d => {
+      const iso3 = getISO3(d.id);
+      const country = COUNTRIES_DATA[iso3];
+      if (!country) return '#1a2035';
+      return colorScale(country[currentMetric]);
+    })
+    .on('mousemove', onMouseMove)
+    .on('mouseleave', onMouseLeave)
+    .on('click', onClick);
+
+  updateLegend();
+}
+
+function getISO3(numericId) {
+  // Map numeric ID -> ISO2 -> ISO3
+  // world-atlas uses numeric IDs; we need to convert
+  const numToIso2 = {
+    "004":"AF","008":"AL","012":"DZ","024":"AO","032":"AR","036":"AU","040":"AT","050":"BD",
+    "056":"BE","068":"BO","076":"BR","100":"BG","116":"KH","120":"CM","124":"CA","144":"LK",
+    "152":"CL","156":"CN","170":"CO","180":"CD","188":"CR","191":"HR","192":"CU","196":"CY",
+    "203":"CZ","208":"DK","218":"EC","818":"EG","222":"SV","231":"ET","246":"FI","250":"FR",
+    "276":"DE","288":"GH","300":"GR","320":"GT","324":"GN","332":"HT","340":"HN","348":"HU",
+    "356":"IN","360":"ID","364":"IR","368":"IQ","372":"IE","376":"IL","380":"IT","388":"JM",
+    "392":"JP","400":"JO","398":"KZ","404":"KE","408":"KP","410":"KR","414":"KW","418":"LA",
+    "422":"LB","430":"LR","434":"LY","440":"LT","442":"LU","450":"MG","454":"MW","458":"MY",
+    "484":"MX","504":"MA","508":"MZ","496":"MN","516":"NA","524":"NP","528":"NL","554":"NZ",
+    "558":"NI","562":"NE","566":"NG","578":"NO","512":"OM","586":"PK","591":"PA","598":"PG",
+    "600":"PY","604":"PE","608":"PH","616":"PL","620":"PT","630":"PR","634":"QA","642":"RO",
+    "643":"RU","646":"RW","682":"SA","686":"SN","694":"SL","703":"SK","706":"SO","710":"ZA",
+    "724":"ES","729":"SD","752":"SE","756":"CH","760":"SY","764":"TH","768":"TG","780":"TT",
+    "788":"TN","792":"TR","800":"UG","804":"UA","784":"AE","826":"GB","840":"US","858":"UY",
+    "860":"UZ","862":"VE","704":"VN","887":"YE","894":"ZM","716":"ZW","012":"DZ","024":"AO",
+    "050":"BD","064":"BT","072":"BW","076":"BR","084":"BZ","096":"BN","104":"MM","140":"CF",
+    "148":"TD","178":"CG","162":"CX","266":"GA","270":"GM","328":"GY","426":"LS","466":"ML",
+    "478":"MR","480":"MU","516":"NA","562":"NE","591":"PA","624":"GW","144":"LK","417":"KG",
+    "762":"TJ","795":"TM"
+  };
+  const id = String(numericId).padStart(3,'0');
+  const iso2 = numToIso2[id];
+  if (!iso2) return null;
+  return ISO2TO3[iso2] || null;
+}
+
+// ==================== INTERACTIONS ====================
+function onMouseMove(event, d) {
+  const iso3 = getISO3(d.id);
+  const country = iso3 ? COUNTRIES_DATA[iso3] : null;
+  if (!country) return;
+
+  const config = METRIC_CONFIG[currentMetric];
+  const tooltip = document.getElementById('tooltip');
+  tooltip.innerHTML = `
+    <div class="tip-name"><span class="tip-flag">${country.flag}</span>${country.name}</div>
+    <div class="tip-row">
+      <span class="tip-label">GDP</span>
+      <span class="tip-val">$${country.gdp.toFixed(0)}B</span>
+    </div>
+    <div class="tip-row">
+      <span class="tip-label">Population</span>
+      <span class="tip-val">${country.population.toFixed(1)}M</span>
+    </div>
+    <div class="tip-row">
+      <span class="tip-label">Life Exp.</span>
+      <span class="tip-val">${country.lifeExpectancy.toFixed(1)} yrs</span>
+    </div>
+  `;
+  tooltip.style.left = event.clientX + 'px';
+  tooltip.style.top = event.clientY + 'px';
+  tooltip.classList.add('show');
+}
+
+function onMouseLeave() {
+  document.getElementById('tooltip').classList.remove('show');
+}
+
+function onClick(event, d) {
+  const iso3 = getISO3(d.id);
+  if (!iso3 || !COUNTRIES_DATA[iso3]) return;
+  selectedCountry = iso3;
+  drawMap();
+  showCountryDetail(iso3);
+}
+
+// ==================== SIDEBAR ====================
+function showCountryDetail(iso3) {
+  const c = COUNTRIES_DATA[iso3];
+  if (!c) return;
+  document.getElementById('emptyState').style.display = 'none';
+  const detail = document.getElementById('countryDetail');
+  detail.style.display = 'block';
+
+  const allGdp = Object.values(COUNTRIES_DATA).map(x=>x.gdp).sort((a,b)=>b-a);
+  const allPop = Object.values(COUNTRIES_DATA).map(x=>x.population).sort((a,b)=>b-a);
+  const allLife = Object.values(COUNTRIES_DATA).map(x=>x.lifeExpectancy).sort((a,b)=>b-a);
+  const allArea = Object.values(COUNTRIES_DATA).map(x=>x.area).sort((a,b)=>b-a);
+
+  const gdpRank = allGdp.indexOf(c.gdp) + 1;
+  const popRank = allPop.indexOf(c.population) + 1;
+  const lifeRank = allLife.indexOf(c.lifeExpectancy) + 1;
+  const areaRank = allArea.indexOf(c.area) + 1;
+
+  const maxGdp = allGdp[0], maxPop = allPop[0], maxLife = allLife[0], maxArea = allArea[0];
+
+  detail.innerHTML = `
+    <div class="detail-header">
+      <div class="detail-flag">${c.flag}</div>
+      <div class="detail-name">${c.name}</div>
+      <div class="detail-region">${c.region}</div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">GDP</div>
+        <div class="stat-val">$${c.gdp.toFixed(0)}B</div>
+        <div class="stat-sub">Rank #${gdpRank}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Population</div>
+        <div class="stat-val">${c.population.toFixed(1)}M</div>
+        <div class="stat-sub">Rank #${popRank}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Life Expectancy</div>
+        <div class="stat-val">${c.lifeExpectancy.toFixed(1)}</div>
+        <div class="stat-sub">years · Rank #${lifeRank}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Area</div>
+        <div class="stat-val">${c.area.toFixed(0)}k</div>
+        <div class="stat-sub">km² · Rank #${areaRank}</div>
+      </div>
+    </div>
+
+    <div class="bar-row metric-gdp">
+      <div class="bar-label"><span>GDP vs World Max</span><span>$${c.gdp.toFixed(0)}B</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(c.gdp/maxGdp*100).toFixed(1)}%"></div></div>
+    </div>
+    <div class="bar-row metric-pop" style="margin-top:10px">
+      <div class="bar-label"><span>Population vs Max</span><span>${c.population.toFixed(1)}M</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(c.population/maxPop*100).toFixed(1)}%"></div></div>
+    </div>
+    <div class="bar-row metric-life" style="margin-top:10px">
+      <div class="bar-label"><span>Life Expectancy</span><span>${c.lifeExpectancy.toFixed(1)} yrs</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(c.lifeExpectancy/maxLife*100).toFixed(1)}%"></div></div>
+    </div>
+    <div class="bar-row metric-area" style="margin-top:10px;margin-bottom:20px">
+      <div class="bar-label"><span>Area vs Largest</span><span>${c.area.toFixed(0)}k km²</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(c.area/maxArea*100).toFixed(1)}%"></div></div>
+    </div>
+
+    ${renderTopList()}
+  `;
+}
+
+function renderTopList() {
+  const config = METRIC_CONFIG[currentMetric];
+  const sorted = Object.entries(COUNTRIES_DATA)
+    .sort((a,b) => b[1][currentMetric] - a[1][currentMetric])
+    .slice(0,10);
+
+  return `
+    <div class="rank-section">
+      <div class="rank-title">Top 10 by ${config.label}</div>
+      ${sorted.map(([iso,c], i) => `
+        <div class="rank-item" onclick="selectCountry('${iso}')">
+          <span class="rank-num">${i+1}</span>
+          <span class="rank-flag">${c.flag}</span>
+          <span class="rank-name">${c.name}</span>
+          <span class="rank-val">${config.format(c[currentMetric])}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function selectCountry(iso3) {
+  selectedCountry = iso3;
+  drawMap();
+  showCountryDetail(iso3);
+}
+
+// ==================== LEGEND ====================
+function updateLegend() {
+  const config = METRIC_CONFIG[currentMetric];
+  document.getElementById('legendTitle').textContent = config.label;
+  document.getElementById('legendBar').style.background =
+    `linear-gradient(to right, ${config.colors.join(',')})`;
+
+  const values = Object.values(COUNTRIES_DATA).map(d => d[currentMetric]);
+  const mn = Math.min(...values), mx = Math.max(...values);
+  document.getElementById('legendMin').textContent = config.format(mn);
+  document.getElementById('legendMax').textContent = config.format(mx);
+}
+
+// ==================== ZOOM ====================
+function zoomIn() { svg.transition().call(zoom.scaleBy, 1.5); }
+function zoomOut() { svg.transition().call(zoom.scaleBy, 0.67); }
+function resetZoom() { svg.transition().call(zoom.transform, d3.zoomIdentity); }
+
+// ==================== METRIC SWITCH ====================
+document.getElementById('metricsBar').addEventListener('click', e => {
+  const btn = e.target.closest('.metric-btn');
+  if (!btn) return;
+  document.querySelectorAll('.metric-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentMetric = btn.dataset.metric;
+  drawMap();
+  if (selectedCountry) showCountryDetail(selectedCountry);
+});
+
+// ==================== TOAST ====================
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ==================== RESIZE ====================
+window.addEventListener('resize', () => {
+  const mapWrap = document.getElementById('mapWrap');
+  width = mapWrap.clientWidth;
+  height = mapWrap.clientHeight;
+  svg.attr('width', width).attr('height', height);
+  projection.scale(width / 6.2).translate([width/2, height/2]);
+  path = d3.geoPath().projection(projection);
+  drawMap();
+});
+
+// ==================== LOAD FALLBACK ====================
+function loadFallback() {
+  showToast('Map data loaded');
+  updateLoadingBar(100);
+  document.getElementById('loadingBar').style.opacity = 0;
+  // Show sidebar with ranking even without map
+  document.getElementById('emptyState').innerHTML = `
+    <div class="empty-globe">🌍</div>
+    <div class="empty-text">Map data unavailable.<br>Browse rankings below.</div>
+  `;
+}
+
+// Start
+init();
+</script>
+</body>
+</html>
